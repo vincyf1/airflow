@@ -26,10 +26,7 @@ from airflow.utils.decorators import apply_defaults
 
 class AWSAthenaOperator(BaseOperator):
     """
-    An operator that submit presto query to athena.
-
-    If ``do_xcom_push`` is True, the QueryExecutionID assigned to the
-    query will be pushed to an XCom when it successfuly completes.
+    An operator that submits a presto query to athena.
 
     :param query: Presto to be run on athena. (templated)
     :type query: str
@@ -81,7 +78,7 @@ class AWSAthenaOperator(BaseOperator):
 
     def get_hook(self):
         """Create and return an AWSAthenaHook."""
-        return AWSAthenaHook(self.aws_conn_id, self.sleep_time)
+        return AWSAthenaHook(self.aws_conn_id, sleep_time=self.sleep_time)
 
     def execute(self, context):
         """

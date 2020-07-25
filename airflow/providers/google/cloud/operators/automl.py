@@ -58,7 +58,7 @@ class AutoMLTrainModelOperator(BaseOperator):
     :type metadata: Optional[Sequence[Tuple[str, str]]]
     :param gcp_conn_id: The connection ID to use to connect to Google Cloud Platform.
     :type gcp_conn_id: str
-     """
+    """
 
     template_fields = ("model", "location", "project_id")
 
@@ -558,7 +558,7 @@ class AutoMLTablesUpdateDatasetOperator(BaseOperator):
     :type gcp_conn_id: str
     """
 
-    template_fields = ("dataset", "update_mask", "location", "project_id")
+    template_fields = ("dataset", "update_mask", "location")
 
     @apply_defaults
     def __init__(
@@ -778,7 +778,7 @@ class AutoMLDeployModelOperator(BaseOperator):
         model_id: str,
         location: str,
         project_id: Optional[str] = None,
-        image_detection_metadata: Optional[Optional[Optional[dict]]] = None,
+        image_detection_metadata: Optional[dict] = None,
         metadata: Optional[Sequence[Tuple[str, str]]] = None,
         timeout: Optional[float] = None,
         retry: Optional[Retry] = None,

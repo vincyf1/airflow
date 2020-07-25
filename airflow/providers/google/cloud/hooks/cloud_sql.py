@@ -34,7 +34,7 @@ import subprocess
 import time
 import uuid
 from subprocess import PIPE, Popen
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Sequence, Union
 from urllib.parse import quote_plus
 
 import requests
@@ -80,10 +80,15 @@ class CloudSQLHook(GoogleBaseHook):
     def __init__(
         self,
         api_version: str,
-        gcp_conn_id: str = 'google_cloud_default',
-        delegate_to: Optional[str] = None
+        gcp_conn_id: str = "google_cloud_default",
+        delegate_to: Optional[str] = None,
+        impersonation_chain: Optional[Union[str, Sequence[str]]] = None,
     ) -> None:
-        super().__init__(gcp_conn_id, delegate_to)
+        super().__init__(
+            gcp_conn_id=gcp_conn_id,
+            delegate_to=delegate_to,
+            impersonation_chain=impersonation_chain,
+        )
         self.api_version = api_version
         self._conn = None
 
@@ -137,7 +142,7 @@ class CloudSQLHook(GoogleBaseHook):
             body=body
         ).execute(num_retries=self.num_retries)
         operation_name = response["name"]
-        self._wait_for_operation_to_complete(project_id=project_id,  # type:ignore
+        self._wait_for_operation_to_complete(project_id=project_id,
                                              operation_name=operation_name)
 
     @GoogleBaseHook.fallback_to_default_project_id
@@ -165,7 +170,7 @@ class CloudSQLHook(GoogleBaseHook):
             body=body
         ).execute(num_retries=self.num_retries)
         operation_name = response["name"]
-        self._wait_for_operation_to_complete(project_id=project_id,  # type:ignore
+        self._wait_for_operation_to_complete(project_id=project_id,
                                              operation_name=operation_name)
 
     @GoogleBaseHook.fallback_to_default_project_id
@@ -186,7 +191,7 @@ class CloudSQLHook(GoogleBaseHook):
             instance=instance,
         ).execute(num_retries=self.num_retries)
         operation_name = response["name"]
-        self._wait_for_operation_to_complete(project_id=project_id,  # type:ignore
+        self._wait_for_operation_to_complete(project_id=project_id,
                                              operation_name=operation_name)
 
     @GoogleBaseHook.fallback_to_default_project_id
@@ -233,7 +238,7 @@ class CloudSQLHook(GoogleBaseHook):
             body=body
         ).execute(num_retries=self.num_retries)
         operation_name = response["name"]
-        self._wait_for_operation_to_complete(project_id=project_id,  # type:ignore
+        self._wait_for_operation_to_complete(project_id=project_id,
                                              operation_name=operation_name)
 
     @GoogleBaseHook.fallback_to_default_project_id
@@ -270,7 +275,7 @@ class CloudSQLHook(GoogleBaseHook):
             body=body
         ).execute(num_retries=self.num_retries)
         operation_name = response["name"]
-        self._wait_for_operation_to_complete(project_id=project_id,  # type:ignore
+        self._wait_for_operation_to_complete(project_id=project_id,
                                              operation_name=operation_name)
 
     @GoogleBaseHook.fallback_to_default_project_id
@@ -294,7 +299,7 @@ class CloudSQLHook(GoogleBaseHook):
             database=database
         ).execute(num_retries=self.num_retries)
         operation_name = response["name"]
-        self._wait_for_operation_to_complete(project_id=project_id,  # type:ignore
+        self._wait_for_operation_to_complete(project_id=project_id,
                                              operation_name=operation_name)
 
     @GoogleBaseHook.fallback_to_default_project_id
@@ -321,7 +326,7 @@ class CloudSQLHook(GoogleBaseHook):
             body=body
         ).execute(num_retries=self.num_retries)
         operation_name = response["name"]
-        self._wait_for_operation_to_complete(project_id=project_id,  # type:ignore
+        self._wait_for_operation_to_complete(project_id=project_id,
                                              operation_name=operation_name)
 
     @GoogleBaseHook.fallback_to_default_project_id
@@ -348,7 +353,7 @@ class CloudSQLHook(GoogleBaseHook):
                 body=body
             ).execute(num_retries=self.num_retries)
             operation_name = response["name"]
-            self._wait_for_operation_to_complete(project_id=project_id,  # type: ignore
+            self._wait_for_operation_to_complete(project_id=project_id,
                                                  operation_name=operation_name)
         except HttpError as ex:
             raise AirflowException(
@@ -933,10 +938,9 @@ class CloudSQLDatabaseHook(BaseHook):
         Create Connection object, according to whether it uses proxy, TCP, UNIX sockets, SSL.
         Connection ID will be randomly generated.
         """
-        connection = Connection(conn_id=self.db_conn_id)
         uri = self._generate_connection_uri()
+        connection = Connection(conn_id=self.db_conn_id, uri=uri)
         self.log.info("Creating connection %s", self.db_conn_id)
-        connection.parse_from_uri(uri)
         return connection
 
     def get_sqlproxy_runner(self) -> CloudSqlProxyRunner:
@@ -980,7 +984,7 @@ class CloudSQLDatabaseHook(BaseHook):
                 raise ValueError("The db_hook should be set")
             if not isinstance(self.db_hook, PostgresHook):
                 raise ValueError(f"The db_hook should be PostrgresHook and is {type(self.db_hook)}")
-            conn = getattr(self.db_hook, 'conn')  # type: ignore
+            conn = getattr(self.db_hook, 'conn')
             if conn and conn.notices:
                 for output in self.db_hook.conn.notices:
                     self.log.info(output)

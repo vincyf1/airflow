@@ -18,6 +18,7 @@
 """
 Base operator for all operators.
 """
+import abc
 import copy
 import functools
 import logging
@@ -26,7 +27,7 @@ import warnings
 from abc import ABCMeta, abstractmethod
 from datetime import datetime, timedelta
 from typing import (
-    Any, Callable, ClassVar, Dict, FrozenSet, Iterable, List, Optional, Set, Tuple, Type, Union, cast,
+    Any, Callable, ClassVar, Dict, FrozenSet, Iterable, List, Optional, Sequence, Set, Tuple, Type, Union,
 )
 
 import attr
@@ -36,7 +37,7 @@ from dateutil.relativedelta import relativedelta
 from sqlalchemy.orm import Session
 
 from airflow.configuration import conf
-from airflow.exceptions import AirflowException, DuplicateTaskIdFound
+from airflow.exceptions import AirflowException
 from airflow.lineage import apply_lineage, prepare_lineage
 from airflow.models.base import Operator
 from airflow.models.pool import Pool
@@ -60,9 +61,29 @@ from airflow.utils.weight_rule import WeightRule
 ScheduleInterval = Union[str, timedelta, relativedelta]
 
 
+class BaseOperatorMeta(abc.ABCMeta):
+    """
+    Base metaclass of BaseOperator.
+    """
+
+    def __call__(cls, *args, **kwargs):
+        """
+        Called when you call BaseOperator(). In this way we are able to perform an action
+        after initializing an operator no matter where  the ``super().__init__`` is called
+        (before or after assign of new attributes in a custom operator).
+        """
+        obj: BaseOperator = type.__call__(cls, *args, **kwargs)
+        # Here we set upstream task defined by XComArgs passed to template fields of the operator
+        obj.set_xcomargs_dependencies()
+
+        # Mark instance as instantiated https://docs.python.org/3/tutorial/classes.html#private-variables
+        obj._BaseOperator__instantiated = True
+        return obj
+
+
 # pylint: disable=too-many-instance-attributes,too-many-public-methods
 @functools.total_ordering
-class BaseOperator(Operator, LoggingMixin):
+class BaseOperator(Operator, LoggingMixin, metaclass=BaseOperatorMeta):
     """
     Abstract base class for all operators. Since operators create objects that
     become nodes in the dag, BaseOperator contains many recursive methods for
@@ -127,12 +148,12 @@ class BaseOperator(Operator, LoggingMixin):
     :param end_date: if specified, the scheduler won't go beyond this date
     :type end_date: datetime.datetime
     :param depends_on_past: when set to true, task instances will run
-        sequentially while relying on the previous task's schedule to
-        succeed. The task instance for the start_date is allowed to run.
+        sequentially and only if the previous instance has succeeded or has been skipped.
+        The task instance for the start_date is allowed to run.
     :type depends_on_past: bool
     :param wait_for_downstream: when set to true, an instance of task
         X will wait for tasks immediately downstream of the previous instance
-        of task X to finish successfully before it runs. This is useful if the
+        of task X to finish successfully or be skipped before it runs. This is useful if the
         different instances of a task X alter the same asset, and this asset
         is used by tasks downstream of task X. Note that depends_on_past
         is forced to True wherever wait_for_downstream is used. Also note that
@@ -245,9 +266,9 @@ class BaseOperator(Operator, LoggingMixin):
     :type do_xcom_push: bool
     """
     # For derived classes to define which fields will get jinjaified
-    template_fields: Iterable[str] = []
+    template_fields: Iterable[str] = ()
     # Defines which files extensions to look for in the templated fields
-    template_ext: Iterable[str] = []
+    template_ext: Iterable[str] = ()
     # Defines the color in the UI
     ui_color = '#fff'  # type: str
     ui_fgcolor = '#000'  # type: str
@@ -292,6 +313,12 @@ class BaseOperator(Operator, LoggingMixin):
     # Defines if the operator supports lineage without manual definitions
     supports_lineage = False
 
+    # If True then the class constructor was called
+    __instantiated = False
+
+    # Set to True before calling execute method
+    _lock_for_execution = False
+
     # noinspection PyUnusedLocal
     # pylint: disable=too-many-arguments,too-many-locals, too-many-statements
     @apply_defaults
@@ -332,24 +359,23 @@ class BaseOperator(Operator, LoggingMixin):
         do_xcom_push: bool = True,
         inlets: Optional[Any] = None,
         outlets: Optional[Any] = None,
-        *args,
         **kwargs
     ):
         from airflow.models.dag import DagContext
         super().__init__()
-        if args or kwargs:
+        if kwargs:
             if not conf.getboolean('operators', 'ALLOW_ILLEGAL_ARGUMENTS'):
                 raise AirflowException(
                     "Invalid arguments were passed to {c} (task_id: {t}). Invalid "
-                    "arguments were:\n*args: {a}\n**kwargs: {k}".format(
-                        c=self.__class__.__name__, a=args, k=kwargs, t=task_id),
+                    "arguments were:\n**kwargs: {k}".format(
+                        c=self.__class__.__name__, k=kwargs, t=task_id),
                 )
             warnings.warn(
                 'Invalid arguments were passed to {c} (task_id: {t}). '
                 'Support for passing such arguments will be dropped in '
                 'future. Invalid arguments were:'
-                '\n*args: {a}\n**kwargs: {k}'.format(
-                    c=self.__class__.__name__, a=args, k=kwargs, t=task_id),
+                '\n**kwargs: {k}'.format(
+                    c=self.__class__.__name__, k=kwargs, t=task_id),
                 category=PendingDeprecationWarning,
                 stacklevel=3
             )
@@ -547,6 +573,18 @@ class BaseOperator(Operator, LoggingMixin):
 
         return self
 
+    def __setattr__(self, key, value):
+        super().__setattr__(key, value)
+        if self._lock_for_execution:
+            # Skip any custom behaviour during execute
+            return
+        if self.__instantiated and key in self.template_fields:
+            # Resolve upstreams set by assigning an XComArg after initializing
+            # an operator, example:
+            #   op = BashOperator()
+            #   op.bash_command = "sleep 1"
+            self.set_xcomargs_dependencies()
+
     def add_inlets(self, inlets: Iterable[Any]):
         """
         Sets inlets to this operator
@@ -600,9 +638,8 @@ class BaseOperator(Operator, LoggingMixin):
                 "The DAG assigned to {} can not be changed.".format(self))
         elif self.task_id not in dag.task_dict:
             dag.add_task(self)
-        elif self.task_id in dag.task_dict and dag.task_dict[self.task_id] != self:
-            raise DuplicateTaskIdFound(
-                "Task id '{}' has already been added to the DAG".format(self.task_id))
+        elif self.task_id in dag.task_dict and dag.task_dict[self.task_id] is not self:
+            dag.add_task(self)
 
         self._dag = dag  # pylint: disable=attribute-defined-outside-init
 
@@ -633,6 +670,56 @@ class BaseOperator(Operator, LoggingMixin):
             TriggerRuleDep(),
             NotPreviouslySkippedDep(),
         }
+
+    def prepare_for_execution(self) -> "BaseOperator":
+        """
+        Lock task for execution to disable custom action in __setattr__ and
+        returns a copy of the task
+        """
+        other = copy.copy(self)
+        other._lock_for_execution = True  # pylint: disable=protected-access
+        return other
+
+    def set_xcomargs_dependencies(self) -> None:
+        """
+        Resolves upstream dependencies of a task. In this way passing an ``XComArg``
+        as value for a template field will result in creating upstream relation between
+        two tasks.
+
+        **Example**: ::
+
+            with DAG(...):
+                generate_content = GenerateContentOperator(task_id="generate_content")
+                send_email = EmailOperator(..., html_content=generate_content.output)
+
+            # This is equivalent to
+            with DAG(...):
+                generate_content = GenerateContentOperator(task_id="generate_content")
+                send_email = EmailOperator(
+                    ..., html_content="{{ task_instance.xcom_pull('generate_content') }}"
+                )
+                generate_content >> send_email
+
+        """
+        from airflow.models.xcom_arg import XComArg
+
+        def apply_set_upstream(arg: Any):
+            if isinstance(arg, XComArg):
+                self.set_upstream(arg.operator)
+            elif isinstance(arg, (tuple, set, list)):
+                for elem in arg:
+                    apply_set_upstream(elem)
+            elif isinstance(arg, dict):
+                for elem in arg.values():
+                    apply_set_upstream(elem)
+            elif hasattr(arg, "template_fields"):
+                for elem in arg.template_fields:
+                    apply_set_upstream(elem)
+
+        for field in self.template_fields:
+            if hasattr(self, field):
+                arg = getattr(self, field)
+                apply_set_upstream(arg)
 
     @property
     def priority_weight_total(self) -> int:
@@ -804,12 +891,17 @@ class BaseOperator(Operator, LoggingMixin):
         if not jinja_env:
             jinja_env = self.get_template_env()
 
+        # Imported here to avoid ciruclar dependency
+        from airflow.models.xcom_arg import XComArg
+
         if isinstance(content, str):
             if any(content.endswith(ext) for ext in self.template_ext):
                 # Content contains a filepath
                 return jinja_env.get_template(content).render(**context)
             else:
                 return jinja_env.from_string(content).render(**context)
+        elif isinstance(content, XComArg):
+            return content.resolve(context)
 
         if isinstance(content, tuple):
             if type(content) is not tuple:  # pylint: disable=unidiomatic-typecheck
@@ -868,7 +960,7 @@ class BaseOperator(Operator, LoggingMixin):
                 if content is None:  # pylint: disable=no-else-continue
                     continue
                 elif isinstance(content, str) and \
-                        any([content.endswith(ext) for ext in self.template_ext]):
+                        any(content.endswith(ext) for ext in self.template_ext):
                     env = self.get_template_env()
                     try:
                         setattr(self, field, env.loader.get_source(env, content)[0])
@@ -878,7 +970,7 @@ class BaseOperator(Operator, LoggingMixin):
                     env = self.dag.get_template_env()
                     for i in range(len(content)):  # pylint: disable=consider-using-enumerate
                         if isinstance(content[i], str) and \
-                                any([content[i].endswith(ext) for ext in self.template_ext]):
+                                any(content[i].endswith(ext) for ext in self.template_ext):
                             try:
                                 content[i] = env.loader.get_source(env, content[i])[0]
                             except Exception as e:  # pylint: disable=broad-except
@@ -886,7 +978,7 @@ class BaseOperator(Operator, LoggingMixin):
         self.prepare_template()
 
     @property
-    def upstream_list(self) -> List[str]:
+    def upstream_list(self) -> List["BaseOperator"]:
         """@property: list of tasks directly upstream"""
         return [self.dag.get_task(tid) for tid in self._upstream_task_ids]
 
@@ -896,7 +988,7 @@ class BaseOperator(Operator, LoggingMixin):
         return self._upstream_task_ids
 
     @property
-    def downstream_list(self) -> List[str]:
+    def downstream_list(self) -> List["BaseOperator"]:
         """@property: list of tasks directly downstream"""
         return [self.dag.get_task(tid) for tid in self._downstream_task_ids]
 
@@ -934,13 +1026,10 @@ class BaseOperator(Operator, LoggingMixin):
                 t.task_id for t in self.get_flat_relatives(upstream=False)]
 
         qry = qry.filter(TaskInstance.task_id.in_(tasks))
-
-        count = qry.count()
-
-        clear_task_instances(qry.all(), session, dag=self.dag)
-
+        results = qry.all()
+        count = len(results)
+        clear_task_instances(results, session, dag=self.dag)
         session.commit()
-
         return count
 
     @provide_session
@@ -1033,7 +1122,7 @@ class BaseOperator(Operator, LoggingMixin):
         else:
             return self._downstream_task_ids
 
-    def get_direct_relatives(self, upstream: bool = False) -> List[str]:
+    def get_direct_relatives(self, upstream: bool = False) -> List["BaseOperator"]:
         """
         Get list of the direct relatives to the current task, upstream or
         downstream.
@@ -1061,13 +1150,26 @@ class BaseOperator(Operator, LoggingMixin):
             item_set.add(item)
 
     def _set_relatives(self,
-                       task_or_task_list: Union['BaseOperator', List['BaseOperator']],
+                       task_or_task_list: Union['BaseOperator', Sequence['BaseOperator']],
                        upstream: bool = False) -> None:
         """Sets relatives for the task or task list."""
-        try:
-            task_list = list(task_or_task_list)  # type: ignore
-        except TypeError:
-            task_list = [task_or_task_list]  # type: ignore
+        from airflow.models.xcom_arg import XComArg
+
+        if isinstance(task_or_task_list, XComArg):
+            # otherwise we will start to iterate over xcomarg
+            # because of the "list" check below
+            # with current XComArg.__getitem__ implementation
+            task_list = [task_or_task_list.operator]
+        else:
+            try:
+                task_list = list(task_or_task_list)  # type: ignore
+            except TypeError:
+                task_list = [task_or_task_list]  # type: ignore
+
+            task_list = [
+                t.operator if isinstance(t, XComArg) else t
+                for t in task_list
+            ]
 
         for task in task_list:
             if not isinstance(task, BaseOperator):
@@ -1107,28 +1209,47 @@ class BaseOperator(Operator, LoggingMixin):
                 self.add_only_new(self._downstream_task_ids, task.task_id)
                 task.add_only_new(task.get_direct_relative_ids(upstream=True), self.task_id)
 
-    def set_downstream(self, task_or_task_list: Union['BaseOperator', List['BaseOperator']]) -> None:
+    def set_downstream(self, task_or_task_list: Union['BaseOperator', Sequence['BaseOperator']]) -> None:
         """
         Set a task or a task list to be directly downstream from the current
         task.
         """
         self._set_relatives(task_or_task_list, upstream=False)
 
-    def set_upstream(self, task_or_task_list: Union['BaseOperator', List['BaseOperator']]) -> None:
+    def set_upstream(self, task_or_task_list: Union['BaseOperator', Sequence['BaseOperator']]) -> None:
         """
         Set a task or a task list to be directly upstream from the current
         task.
         """
         self._set_relatives(task_or_task_list, upstream=True)
 
+    @property
+    def output(self):
+        """Returns reference to XCom pushed by current operator"""
+        from airflow.models.xcom_arg import XComArg
+        return XComArg(operator=self)
+
     @staticmethod
     def xcom_push(
             context: Any,
             key: str,
             value: Any,
-            execution_date: Optional[datetime] = None) -> None:
+            execution_date: Optional[datetime] = None,
+    ) -> None:
         """
-        See TaskInstance.xcom_push()
+        Make an XCom available for tasks to pull.
+
+        :param context: Execution Context Dictionary
+        :type: Any
+        :param key: A key for the XCom
+        :type key: str
+        :param value: A value for the XCom. The value is pickled and stored
+            in the database.
+        :type value: any pickleable object
+        :param execution_date: if provided, the XCom will not be visible until
+            this date. This can be used, for example, to send a message to a
+            task on a future date without it being immediately visible.
+        :type execution_date: datetime
         """
         context['ti'].xcom_push(
             key=key,
@@ -1141,9 +1262,38 @@ class BaseOperator(Operator, LoggingMixin):
             task_ids: Optional[List[str]] = None,
             dag_id: Optional[str] = None,
             key: str = XCOM_RETURN_KEY,
-            include_prior_dates: Optional[bool] = None) -> Any:
+            include_prior_dates: Optional[bool] = None,
+    ) -> Any:
         """
-        See TaskInstance.xcom_pull()
+        Pull XComs that optionally meet certain criteria.
+
+        The default value for `key` limits the search to XComs
+        that were returned by other tasks (as opposed to those that were pushed
+        manually). To remove this filter, pass key=None (or any desired value).
+
+        If a single task_id string is provided, the result is the value of the
+        most recent matching XCom from that task_id. If multiple task_ids are
+        provided, a tuple of matching values is returned. None is returned
+        whenever no matches are found.
+
+        :param context: Execution Context Dictionary
+        :type: Any
+        :param key: A key for the XCom. If provided, only XComs with matching
+            keys will be returned. The default key is 'return_value', also
+            available as a constant XCOM_RETURN_KEY. This key is automatically
+            given to XComs returned by tasks (as opposed to being pushed
+            manually). To remove the filter, pass key=None.
+        :type key: str
+        :param task_ids: Only XComs from tasks with matching ids will be
+            pulled. Can pass None to remove the filter.
+        :type task_ids: str or iterable of strings (representing task_ids)
+        :param dag_id: If provided, only pulls XComs from this DAG.
+            If None (default), the DAG of the calling task is used.
+        :type dag_id: str
+        :param include_prior_dates: If False, only XComs from the current
+            execution_date are returned. If True, XComs from previous dates
+            are returned as well.
+        :type include_prior_dates: bool
         """
         return context['ti'].xcom_pull(
             key=key,
@@ -1182,13 +1332,14 @@ class BaseOperator(Operator, LoggingMixin):
         if not cls.__serialized_fields:
             cls.__serialized_fields = frozenset(
                 vars(BaseOperator(task_id='test')).keys() - {
-                    'inlets', 'outlets', '_upstream_task_ids', 'default_args', 'dag', '_dag'
+                    'inlets', 'outlets', '_upstream_task_ids', 'default_args', 'dag', '_dag',
+                    '_BaseOperator__instantiated',
                 } | {'_task_type', 'subdag', 'ui_color', 'ui_fgcolor', 'template_fields'})
 
         return cls.__serialized_fields
 
 
-def chain(*tasks: Union[BaseOperator, List[BaseOperator]]):
+def chain(*tasks: Union[BaseOperator, Sequence[BaseOperator]]):
     r"""
     Given a number of tasks, builds a dependency chain.
     Support mix airflow.models.BaseOperator and List[airflow.models.BaseOperator].
@@ -1225,12 +1376,12 @@ def chain(*tasks: Union[BaseOperator, List[BaseOperator]]):
         if isinstance(down_task, BaseOperator):
             down_task.set_upstream(up_task)
             continue
-        if not isinstance(up_task, List) or not isinstance(down_task, List):
+        if not isinstance(up_task, Sequence) or not isinstance(down_task, Sequence):
             raise TypeError(
                 'Chain not supported between instances of {up_type} and {down_type}'.format(
                     up_type=type(up_task), down_type=type(down_task)))
-        up_task_list = cast(List[BaseOperator], up_task)
-        down_task_list = cast(List[BaseOperator], down_task)
+        up_task_list = up_task
+        down_task_list = down_task
         if len(up_task_list) != len(down_task_list):
             raise AirflowException(
                 f'Chain not supported different length Iterable '
@@ -1239,8 +1390,8 @@ def chain(*tasks: Union[BaseOperator, List[BaseOperator]]):
             up_t.set_downstream(down_t)
 
 
-def cross_downstream(from_tasks: List[BaseOperator],
-                     to_tasks: Union[BaseOperator, List[BaseOperator]]):
+def cross_downstream(from_tasks: Sequence[BaseOperator],
+                     to_tasks: Union[BaseOperator, Sequence[BaseOperator]]):
     r"""
     Set downstream dependencies for all tasks in from_tasks to all tasks in to_tasks.
 

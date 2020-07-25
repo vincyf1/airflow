@@ -16,6 +16,8 @@
 # specific language governing permissions and limitations
 # under the License.
 #
+from typing import Iterable
+
 from airflow.exceptions import AirflowException
 from airflow.operators.check_operator import CheckOperator, ValueCheckOperator
 from airflow.providers.qubole.hooks.qubole_check import QuboleCheckHook
@@ -72,7 +74,9 @@ class QuboleCheckOperator(CheckOperator, QuboleOperator):
 
     """
 
-    template_fields = QuboleOperator.template_fields + CheckOperator.template_fields
+    template_fields: Iterable[str] = (
+        set(QuboleOperator.template_fields) | set(CheckOperator.template_fields)
+    )
     template_ext = QuboleOperator.template_ext
     ui_fgcolor = '#000'
 
@@ -153,7 +157,7 @@ class QuboleValueCheckOperator(ValueCheckOperator, QuboleOperator):
             QuboleOperator and ValueCheckOperator are template-supported.
     """
 
-    template_fields = QuboleOperator.template_fields + ValueCheckOperator.template_fields
+    template_fields = set(QuboleOperator.template_fields) | set(ValueCheckOperator.template_fields)
     template_ext = QuboleOperator.template_ext
     ui_fgcolor = '#000'
 
@@ -229,10 +233,11 @@ def handle_airflow_exception(airflow_exception, hook):
         if cmd.is_success(cmd.status):
             qubole_command_results = hook.get_query_results()
             qubole_command_id = cmd.id
-            exception_message = '\nQubole Command Id: {qubole_command_id}' \
-                                '\nQubole Command Results:' \
-                                '\n{qubole_command_results}'.format(
-                qubole_command_id=qubole_command_id,  # noqa: E122
-                qubole_command_results=qubole_command_results)
+            exception_message = \
+                '\nQubole Command Id: {qubole_command_id}' \
+                '\nQubole Command Results:' \
+                '\n{qubole_command_results}'.format(
+                    qubole_command_id=qubole_command_id,
+                    qubole_command_results=qubole_command_results)
             raise AirflowException(str(airflow_exception) + exception_message)
     raise AirflowException(str(airflow_exception))

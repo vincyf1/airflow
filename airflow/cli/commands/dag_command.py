@@ -39,10 +39,11 @@ from airflow.utils import cli as cli_utils
 from airflow.utils.cli import get_dag, get_dag_by_file_location, process_subdir, sigint_handler
 from airflow.utils.dot_renderer import render_dag
 from airflow.utils.session import create_session, provide_session
+from airflow.utils.state import State
 
 
 def _tabulate_dag_runs(dag_runs: List[DagRun], tablefmt: str = "fancy_grid") -> str:
-    tabulat_data = (
+    tabulate_data = (
         {
             'ID': dag_run.id,
             'Run ID': dag_run.run_id,
@@ -54,13 +55,13 @@ def _tabulate_dag_runs(dag_runs: List[DagRun], tablefmt: str = "fancy_grid") -> 
         } for dag_run in dag_runs
     )
     return tabulate(
-        tabular_data=tabulat_data,
+        tabular_data=tabulate_data,
         tablefmt=tablefmt
     )
 
 
 def _tabulate_dags(dags: List[DAG], tablefmt: str = "fancy_grid") -> str:
-    tabulat_data = (
+    tabulate_data = (
         {
             'DAG ID': dag.dag_id,
             'Filepath': dag.filepath,
@@ -68,7 +69,7 @@ def _tabulate_dags(dags: List[DAG], tablefmt: str = "fancy_grid") -> str:
         } for dag in sorted(dags, key=lambda d: d.dag_id)
     )
     return tabulate(
-        tabular_data=tabulat_data,
+        tabular_data=tabulate_data,
         tablefmt=tablefmt,
         headers='keys'
     )
@@ -123,6 +124,7 @@ def dag_backfill(args, dag=None):
                 end_date=args.end_date,
                 confirm_prompt=not args.yes,
                 include_subdags=True,
+                dag_run_state=State.NONE,
             )
 
         dag.run(
@@ -259,10 +261,10 @@ def dag_state(args):
         dag = get_dag_by_file_location(args.dag_id)
     dr = DagRun.find(dag.dag_id, execution_date=args.execution_date)
     out = dr[0].state if dr else None
-    confout = ''
+    conf_out = ''
     if out and dr[0].conf:
-        confout = ', ' + json.dumps(dr[0].conf)
-    print(str(out) + confout)
+        conf_out = ', ' + json.dumps(dr[0].conf)
+    print(str(out) + conf_out)
 
 
 @cli_utils.action_logging
@@ -275,7 +277,7 @@ def dag_next_execution(args):
     dag = get_dag(args.subdir, args.dag_id)
 
     if dag.get_is_paused():
-        print("[INFO] Please be reminded this DAG is PAUSED now.")
+        print("[INFO] Please be reminded this DAG is PAUSED now.", file=sys.stderr)
 
     latest_execution_date = dag.get_latest_execution_date()
     if latest_execution_date:
@@ -283,11 +285,16 @@ def dag_next_execution(args):
 
         if next_execution_dttm is None:
             print("[WARN] No following schedule can be found. " +
-                  "This DAG may have schedule interval '@once' or `None`.")
+                  "This DAG may have schedule interval '@once' or `None`.", file=sys.stderr)
+            print(None)
+        else:
+            print(next_execution_dttm)
 
-        print(next_execution_dttm)
+            for _ in range(1, args.num_executions):
+                next_execution_dttm = dag.following_schedule(next_execution_dttm)
+                print(next_execution_dttm)
     else:
-        print("[WARN] Only applicable when there is execution record found for the DAG.")
+        print("[WARN] Only applicable when there is execution record found for the DAG.", file=sys.stderr)
         print(None)
 
 
@@ -376,7 +383,7 @@ def dag_list_dag_runs(args, dag=None):
 def dag_test(args, session=None):
     """Execute one single DagRun for a given DAG and execution date, using the DebugExecutor."""
     dag = get_dag(subdir=args.subdir, dag_id=args.dag_id)
-    dag.clear(start_date=args.execution_date, end_date=args.execution_date, reset_dag_runs=True)
+    dag.clear(start_date=args.execution_date, end_date=args.execution_date, dag_run_state=State.NONE)
     try:
         dag.run(executor=DebugExecutor(), start_date=args.execution_date, end_date=args.execution_date)
     except BackfillUnfinished as e:

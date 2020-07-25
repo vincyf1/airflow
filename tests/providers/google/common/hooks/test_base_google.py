@@ -28,6 +28,7 @@ import tenacity
 from google.auth.environment_vars import CREDENTIALS
 from google.auth.exceptions import GoogleAuthError
 from google.cloud.exceptions import Forbidden
+from parameterized import parameterized
 
 from airflow import version
 from airflow.exceptions import AirflowException
@@ -43,6 +44,7 @@ except GoogleAuthError:
     default_creds_available = False
 
 MODULE_NAME = "airflow.providers.google.common.hooks.base_google"
+PROJECT_ID = "PROJECT_ID"
 
 
 class NoForbiddenAfterCount:
@@ -341,7 +343,10 @@ class TestGoogleBaseHook(unittest.TestCase):
             key_path=None,
             keyfile_dict=None,
             scopes=self.instance.scopes,
-            delegate_to=None)
+            delegate_to=None,
+            target_principal=None,
+            delegates=None,
+        )
         self.assertEqual(('CREDENTIALS', 'PROJECT_ID'), result)
 
     @mock.patch(MODULE_NAME + '.get_credentials_and_project_id')
@@ -359,7 +364,9 @@ class TestGoogleBaseHook(unittest.TestCase):
             key_path='KEY_PATH.json',
             keyfile_dict=None,
             scopes=self.instance.scopes,
-            delegate_to=None
+            delegate_to=None,
+            target_principal=None,
+            delegates=None,
         )
         self.assertEqual((mock_credentials, 'PROJECT_ID'), result)
 
@@ -399,7 +406,9 @@ class TestGoogleBaseHook(unittest.TestCase):
             key_path=None,
             keyfile_dict=service_account,
             scopes=self.instance.scopes,
-            delegate_to=None
+            delegate_to=None,
+            target_principal=None,
+            delegates=None,
         )
         self.assertEqual((mock_credentials, 'PROJECT_ID'), result)
 
@@ -417,7 +426,9 @@ class TestGoogleBaseHook(unittest.TestCase):
             key_path=None,
             keyfile_dict=None,
             scopes=self.instance.scopes,
-            delegate_to="USER"
+            delegate_to="USER",
+            target_principal=None,
+            delegates=None,
         )
         self.assertEqual((mock_credentials, "PROJECT_ID"), result)
 
@@ -435,7 +446,7 @@ class TestGoogleBaseHook(unittest.TestCase):
         )):
             self.instance._get_credentials_and_project_id()
 
-    @mock.patch(  # type: ignore
+    @mock.patch(
         MODULE_NAME + '.get_credentials_and_project_id',
         return_value=("CREDENTIALS", "PROJECT_ID")
     )
@@ -451,7 +462,9 @@ class TestGoogleBaseHook(unittest.TestCase):
             key_path=None,
             keyfile_dict=None,
             scopes=self.instance.scopes,
-            delegate_to=None
+            delegate_to=None,
+            target_principal=None,
+            delegates=None,
         )
         self.assertEqual(("CREDENTIALS", 'SECOND_PROJECT_ID'), result)
 
@@ -591,7 +604,7 @@ class TestGoogleBaseHook(unittest.TestCase):
         }
         self.assertEqual(self.instance.num_retries, 5)
 
-    @mock.patch("airflow.providers.google.common.hooks.base_google.httplib2.Http")
+    @mock.patch("airflow.providers.google.common.hooks.base_google.build_http")
     @mock.patch("airflow.providers.google.common.hooks.base_google.GoogleBaseHook._get_credentials")
     def test_authorize_assert_user_agent_is_sent(self, mock_get_credentials, mock_http):
         """
@@ -615,6 +628,51 @@ class TestGoogleBaseHook(unittest.TestCase):
         )
         self.assertEqual(response, new_response)
         self.assertEqual(content, new_content)
+
+    @mock.patch("airflow.providers.google.common.hooks.base_google.GoogleBaseHook._get_credentials")
+    def test_authorize_assert_http_308_is_excluded(self, mock_get_credentials):
+        """
+        Verify that 308 status code is excluded from httplib2's redirect codes
+        """
+        http_authorized = self.instance._authorize().http
+        self.assertTrue(308 not in http_authorized.redirect_codes)
+
+    @mock.patch("airflow.providers.google.common.hooks.base_google.GoogleBaseHook._get_credentials")
+    def test_authorize_assert_http_timeout_is_present(self, mock_get_credentials):
+        """
+        Verify that http client has a timeout set
+        """
+        http_authorized = self.instance._authorize().http
+        self.assertNotEqual(http_authorized.timeout, None)
+
+    @parameterized.expand([
+        ('string', "ACCOUNT_1", "ACCOUNT_1", None),
+        ('single_element_list', ["ACCOUNT_1"], "ACCOUNT_1", []),
+        ('multiple_elements_list',
+         ["ACCOUNT_1", "ACCOUNT_2", "ACCOUNT_3"], "ACCOUNT_3", ["ACCOUNT_1", "ACCOUNT_2"]),
+    ])
+    @mock.patch(MODULE_NAME + '.get_credentials_and_project_id')
+    def test_get_credentials_and_project_id_with_impersonation_chain(
+        self,
+        _,
+        impersonation_chain,
+        target_principal,
+        delegates,
+        mock_get_creds_and_proj_id,
+    ):
+        mock_credentials = mock.MagicMock()
+        mock_get_creds_and_proj_id.return_value = (mock_credentials, PROJECT_ID)
+        self.instance.impersonation_chain = impersonation_chain
+        result = self.instance._get_credentials_and_project_id()
+        mock_get_creds_and_proj_id.assert_called_once_with(
+            key_path=None,
+            keyfile_dict=None,
+            scopes=self.instance.scopes,
+            delegate_to=None,
+            target_principal=target_principal,
+            delegates=delegates,
+        )
+        self.assertEqual((mock_credentials, PROJECT_ID), result)
 
 
 class TestProvideAuthorizedGcloud(unittest.TestCase):

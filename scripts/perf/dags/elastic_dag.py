@@ -75,7 +75,7 @@ def safe_dag_id(s: str) -> str:
 
 
 def chain_as_binary_tree(*tasks: BashOperator):
-    r'''
+    r"""
     Chain tasks as a binary tree where task i is child of task (i - 1) // 2 :
 
         t0 -> t1 -> t3 -> t7
@@ -85,13 +85,13 @@ def chain_as_binary_tree(*tasks: BashOperator):
            -> t2 -> t5 -> t9
                \
                  -> t6
-    '''
+    """
     for i in range(1, len(tasks)):
         tasks[i].set_downstream(tasks[(i - 1) // 2])
 
 
 def chain_as_grid(*tasks: BashOperator):
-    '''
+    """
     Chain tasks as a grid:
 
      t0 -> t1 -> t2 -> t3
@@ -104,15 +104,15 @@ def chain_as_grid(*tasks: BashOperator):
       |
       v
      t9
-    '''
+    """
     if len(tasks) > 100 * 99 / 2:
         raise ValueError('Cannot generate grid DAGs with lateral size larger than 100 tasks.')
     grid_size = min([n for n in range(100) if n * (n + 1) / 2 >= len(tasks)])
 
     def index(i, j):
-        '''
+        """
         Return the index of node (i, j) on the grid.
-        '''
+        """
         return int(grid_size * i - i * (i - 1) / 2 + j)
 
     for i in range(grid_size - 1):
@@ -124,7 +124,7 @@ def chain_as_grid(*tasks: BashOperator):
 
 
 def chain_as_star(*tasks: BashOperator):
-    '''
+    """
     Chain tasks as a star (all tasks are children of task 0)
 
      t0 -> t1
@@ -132,15 +132,15 @@ def chain_as_star(*tasks: BashOperator):
       | -> t3
       | -> t4
       | -> t5
-    '''
+    """
     tasks[0].set_upstream(list(tasks[1:]))
 
 
 @enum.unique
 class DagShape(Enum):
-    '''
+    """
     Define shape of the Dag that will be used for testing.
-    '''
+    """
     NO_STRUCTURE = "no_structure"
     LINEAR = "linear"
     BINARY_TREE = "binary_tree"
@@ -155,9 +155,16 @@ START_DATE_ENV = os.environ.get("PERF_START_AGO", "1h")
 START_DATE = datetime.now() - parse_time_delta(START_DATE_ENV)
 SCHEDULE_INTERVAL_ENV = os.environ.get("PERF_SCHEDULE_INTERVAL", "@once")
 SCHEDULE_INTERVAL = parse_schedule_interval(SCHEDULE_INTERVAL_ENV)
+
 SHAPE = DagShape(os.environ["PERF_SHAPE"])
 
 args = {"owner": "airflow", "start_date": START_DATE}
+
+if "PERF_MAX_RUNS" in os.environ:
+    if isinstance(SCHEDULE_INTERVAL, str):
+        raise ValueError("Can't set max runs with string-based schedule_interval")
+    num_runs = int(os.environ["PERF_MAX_RUNS"])
+    args['end_date'] = START_DATE + (SCHEDULE_INTERVAL * (num_runs - 1))
 
 for dag_no in range(1, DAG_COUNT + 1):
     dag = DAG(
@@ -178,7 +185,7 @@ for dag_no in range(1, DAG_COUNT + 1):
 
     elastic_dag_tasks = [
         BashOperator(
-            task_id="__".join(["tasks", f"{i}_of_{TASKS_COUNT}"]), bash_command='echo test"', dag=dag
+            task_id="__".join(["tasks", f"{i}_of_{TASKS_COUNT}"]), bash_command='echo test', dag=dag
         )
         for i in range(1, TASKS_COUNT + 1)
     ]

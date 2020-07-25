@@ -14,15 +14,15 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-""""
+"""
 
 Perf-kit
 ========
 
 Useful decorators and context managers used when testing the performance of various Airflow components.
 
-To use this package, you must add the parent directory to the ``PYTHONPATH`` environment variable. If the
-repository root directory is ``/opt/airflow/``, then you need to run the following command:
+To use this package, you must add the parent directory to the :envvar:`PYTHONPATH` environment variable.
+If the repository root directory is ``/opt/airflow/``, then you need to run the following command:
 
 .. code-block:: bash
 

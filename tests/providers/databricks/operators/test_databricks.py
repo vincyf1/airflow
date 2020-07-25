@@ -16,16 +16,15 @@
 # specific language governing permissions and limitations
 # under the License.
 #
-
 import unittest
 from datetime import datetime
 
 import mock
 
-import airflow.providers.databricks.operators.databricks as databricks_operator
 from airflow.exceptions import AirflowException
 from airflow.models import DAG
 from airflow.providers.databricks.hooks.databricks import RunState
+from airflow.providers.databricks.operators import databricks as databricks_operator
 from airflow.providers.databricks.operators.databricks import (
     DatabricksRunNowOperator, DatabricksSubmitRunOperator,
 )
@@ -44,6 +43,18 @@ RENDERED_TEMPLATED_NOTEBOOK_TASK = {
 }
 SPARK_JAR_TASK = {
     'main_class_name': 'com.databricks.Test'
+}
+SPARK_PYTHON_TASK = {
+    'python_file': 'test.py',
+    'parameters': ['--param', '123']
+}
+SPARK_SUBMIT_TASK = {
+    "parameters": [
+        "--class",
+        "org.apache.spark.examples.SparkPi",
+        "dbfs:/path/to/examples.jar",
+        "10"
+    ]
 }
 NEW_CLUSTER = {
     'spark_version': '2.0.x-scala2.10',
@@ -90,7 +101,7 @@ class TestDatabricksOperatorSharedFunctions(unittest.TestCase):
 
 
 class TestDatabricksSubmitRunOperator(unittest.TestCase):
-    def test_init_with_named_parameters(self):
+    def test_init_with_notebook_task_named_parameters(self):
         """
         Test the initializer with the named parameters.
         """
@@ -100,6 +111,36 @@ class TestDatabricksSubmitRunOperator(unittest.TestCase):
         expected = databricks_operator._deep_string_coerce({
             'new_cluster': NEW_CLUSTER,
             'notebook_task': NOTEBOOK_TASK,
+            'run_name': TASK_ID
+        })
+
+        self.assertDictEqual(expected, op.json)
+
+    def test_init_with_spark_python_task_named_parameters(self):
+        """
+        Test the initializer with the named parameters.
+        """
+        op = DatabricksSubmitRunOperator(task_id=TASK_ID,
+                                         new_cluster=NEW_CLUSTER,
+                                         spark_python_task=SPARK_PYTHON_TASK)
+        expected = databricks_operator._deep_string_coerce({
+            'new_cluster': NEW_CLUSTER,
+            'spark_python_task': SPARK_PYTHON_TASK,
+            'run_name': TASK_ID
+        })
+
+        self.assertDictEqual(expected, op.json)
+
+    def test_init_with_spark_submit_task_named_parameters(self):
+        """
+        Test the initializer with the named parameters.
+        """
+        op = DatabricksSubmitRunOperator(task_id=TASK_ID,
+                                         new_cluster=NEW_CLUSTER,
+                                         spark_submit_task=SPARK_SUBMIT_TASK)
+        expected = databricks_operator._deep_string_coerce({
+            'new_cluster': NEW_CLUSTER,
+            'spark_submit_task': SPARK_SUBMIT_TASK,
             'run_name': TASK_ID
         })
 

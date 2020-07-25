@@ -17,7 +17,7 @@
 # under the License.
 """Operators that interact with Google Cloud Life Sciences service."""
 
-from typing import Iterable, Optional
+from typing import Optional
 
 from airflow.exceptions import AirflowException
 from airflow.models import BaseOperator
@@ -28,6 +28,10 @@ from airflow.utils.decorators import apply_defaults
 class LifeSciencesRunPipelineOperator(BaseOperator):
     """
     Runs a Life Sciences Pipeline
+
+    .. seealso::
+        For more information on how to use this operator, take a look at the guide:
+        :ref:`howto/operator:LifeSciencesRunPipelineOperator`
 
     :param body: The request body
     :type body: dict
@@ -42,7 +46,7 @@ class LifeSciencesRunPipelineOperator(BaseOperator):
     :type api_version: str
     """
 
-    template_fields = ("body", "gcp_conn_id", "api_version")  # type: Iterable[str]
+    template_fields = ("body", "gcp_conn_id", "api_version")
 
     @apply_defaults
     def __init__(self,

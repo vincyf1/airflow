@@ -79,6 +79,10 @@ class AirflowSkipException(AirflowException):
     """Raise when the task should be skipped"""
 
 
+class AirflowFailException(AirflowException):
+    """Raise when the task should be failed without retrying"""
+
+
 class AirflowDagCycleException(AirflowException):
     """Raise when there is a cycle in Dag definition"""
 
@@ -136,7 +140,7 @@ class BackfillUnfinished(AirflowException):
     Raises when not all tasks succeed in backfill.
 
     :param message: The human-readable description of the exception
-    :zparam ti_status: The information about all task statuses
+    :param ti_status: The information about all task statuses
     """
     def __init__(self, message, ti_status):
         super().__init__(message)

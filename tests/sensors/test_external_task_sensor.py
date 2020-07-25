@@ -278,7 +278,7 @@ exit 0
         self.test_time_sensor()
         # check that the execution_fn works
         op1 = ExternalTaskSensor(
-            task_id='test_external_task_sensor_check_delta',
+            task_id='test_external_task_sensor_check_delta_1',
             external_dag_id=TEST_DAG_ID,
             external_task_id=TEST_TASK_ID,
             execution_date_fn=lambda dt: dt + timedelta(0),
@@ -292,7 +292,7 @@ exit 0
         )
         # double check that the execution is being called by failing the test
         op2 = ExternalTaskSensor(
-            task_id='test_external_task_sensor_check_delta',
+            task_id='test_external_task_sensor_check_delta_2',
             external_dag_id=TEST_DAG_ID,
             external_task_id=TEST_TASK_ID,
             execution_date_fn=lambda dt: dt + timedelta(days=1),
@@ -307,6 +307,28 @@ exit 0
                 end_date=DEFAULT_DATE,
                 ignore_ti_state=True
             )
+
+    def test_external_task_sensor_fn_multiple_args(self):
+        """Check this task sensor passes multiple args with full context. If no failure, means clean run."""
+        self.test_time_sensor()
+
+        def my_func(dt, context):
+            assert context['execution_date'] == dt
+            return dt + timedelta(0)
+
+        op1 = ExternalTaskSensor(
+            task_id='test_external_task_sensor_multiple_arg_fn',
+            external_dag_id=TEST_DAG_ID,
+            external_task_id=TEST_TASK_ID,
+            execution_date_fn=my_func,
+            allowed_states=['success'],
+            dag=self.dag
+        )
+        op1.run(
+            start_date=DEFAULT_DATE,
+            end_date=DEFAULT_DATE,
+            ignore_ti_state=True
+        )
 
     def test_external_task_sensor_error_delta_and_fn(self):
         self.test_time_sensor()
@@ -325,7 +347,7 @@ exit 0
     def test_catch_invalid_allowed_states(self):
         with self.assertRaises(ValueError):
             ExternalTaskSensor(
-                task_id='test_external_task_sensor_check',
+                task_id='test_external_task_sensor_check_1',
                 external_dag_id=TEST_DAG_ID,
                 external_task_id=TEST_TASK_ID,
                 allowed_states=['invalid_state'],
@@ -334,7 +356,7 @@ exit 0
 
         with self.assertRaises(ValueError):
             ExternalTaskSensor(
-                task_id='test_external_task_sensor_check',
+                task_id='test_external_task_sensor_check_2',
                 external_dag_id=TEST_DAG_ID,
                 external_task_id=None,
                 allowed_states=['invalid_state'],
@@ -435,7 +457,7 @@ def dag_bag_ext():
     task_a_3 >> task_b_3
 
     for dag in [dag_0, dag_1, dag_2, dag_3]:
-        dag_bag.bag_dag(dag, None, dag)
+        dag_bag.bag_dag(dag=dag, root_dag=dag)
 
     return dag_bag
 
@@ -540,7 +562,7 @@ def dag_bag_cyclic():
     task_a_1 >> task_b_1
 
     for dag in [dag_0, dag_1]:
-        dag_bag.bag_dag(dag, None, dag)
+        dag_bag.bag_dag(dag=dag, root_dag=dag)
 
     return dag_bag
 
@@ -565,8 +587,8 @@ def dag_bag_multiple():
     dag_bag = DagBag(dag_folder=DEV_NULL, include_examples=False)
     daily_dag = DAG("daily_dag", start_date=DEFAULT_DATE, schedule_interval="@daily")
     agg_dag = DAG("agg_dag", start_date=DEFAULT_DATE, schedule_interval="@daily")
-    dag_bag.bag_dag(daily_dag, None, daily_dag)
-    dag_bag.bag_dag(agg_dag, None, agg_dag)
+    dag_bag.bag_dag(dag=daily_dag, root_dag=daily_dag)
+    dag_bag.bag_dag(dag=agg_dag, root_dag=agg_dag)
 
     daily_task = DummyOperator(task_id="daily_tas", dag=daily_dag)
 

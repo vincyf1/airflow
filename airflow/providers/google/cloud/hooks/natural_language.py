@@ -37,14 +37,32 @@ class CloudNaturalLanguageHook(GoogleBaseHook):
 
     :param gcp_conn_id: The connection ID to use when fetching connection info.
     :type gcp_conn_id: str
-    :param delegate_to: The account to impersonate, if any.
-        For this to work, the service account making the request must have
+    :param delegate_to: The account to impersonate using domain-wide delegation of authority,
+        if any. For this to work, the service account making the request must have
         domain-wide delegation enabled.
     :type delegate_to: str
+    :param impersonation_chain: Optional service account to impersonate using short-term
+        credentials, or chained list of accounts required to get the access_token
+        of the last account in the list, which will be impersonated in the request.
+        If set as a string, the account must grant the originating account
+        the Service Account Token Creator IAM role.
+        If set as a sequence, the identities from the list must grant
+        Service Account Token Creator IAM role to the directly preceding identity, with first
+        account from the list granting this role to the originating account.
+    :type impersonation_chain: Union[str, Sequence[str]]
     """
 
-    def __init__(self, gcp_conn_id: str = "google_cloud_default", delegate_to: Optional[str] = None) -> None:
-        super().__init__(gcp_conn_id, delegate_to)
+    def __init__(
+        self,
+        gcp_conn_id: str = "google_cloud_default",
+        delegate_to: Optional[str] = None,
+        impersonation_chain: Optional[Union[str, Sequence[str]]] = None,
+    ) -> None:
+        super().__init__(
+            gcp_conn_id=gcp_conn_id,
+            delegate_to=delegate_to,
+            impersonation_chain=impersonation_chain,
+        )
         self._conn = None
 
     def get_conn(self) -> LanguageServiceClient:
@@ -76,7 +94,7 @@ class CloudNaturalLanguageHook(GoogleBaseHook):
 
         :param document: Input document.
             If a dict is provided, it must be of the same form as the protobuf message Document
-        :type document: dict or class google.cloud.language_v1.types.Document
+        :type document: dict or google.cloud.language_v1.types.Document
         :param encoding_type: The encoding type used by the API to calculate offsets.
         :type encoding_type: google.cloud.language_v1.enums.EncodingType
         :param retry: A retry object used to retry requests. If None is specified, requests will not be
@@ -110,7 +128,7 @@ class CloudNaturalLanguageHook(GoogleBaseHook):
 
         :param document: Input document.
             If a dict is provided, it must be of the same form as the protobuf message Document
-        :type document: dict or class google.cloud.language_v1.types.Document
+        :type document: dict or google.cloud.language_v1.types.Document
         :param encoding_type: The encoding type used by the API to calculate offsets.
         :type encoding_type: google.cloud.language_v1.enums.EncodingType
         :param retry: A retry object used to retry requests. If None is specified, requests will not be
@@ -143,7 +161,7 @@ class CloudNaturalLanguageHook(GoogleBaseHook):
 
         :param document: Input document.
             If a dict is provided, it must be of the same form as the protobuf message Document
-        :type document: dict or class google.cloud.language_v1.types.Document
+        :type document: dict or google.cloud.language_v1.types.Document
         :param encoding_type: The encoding type used by the API to calculate offsets.
         :type encoding_type: google.cloud.language_v1.enums.EncodingType
         :param retry: A retry object used to retry requests. If None is specified, requests will not be
@@ -177,7 +195,7 @@ class CloudNaturalLanguageHook(GoogleBaseHook):
 
         :param document: Input document.
             If a dict is provided, it must be of the same form as the protobuf message Document
-        :type document: dict or class google.cloud.language_v1.types.Document#
+        :type document: dict or google.cloud.language_v1.types.Document
         :param encoding_type: The encoding type used by the API to calculate offsets.
         :type encoding_type: google.cloud.language_v1.enums.EncodingType
         :param retry: A retry object used to retry requests. If None is specified, requests will not be
@@ -252,7 +270,7 @@ class CloudNaturalLanguageHook(GoogleBaseHook):
 
         :param document: Input document.
             If a dict is provided, it must be of the same form as the protobuf message Document
-        :type document: dict or class google.cloud.language_v1.types.Document
+        :type document: dict or google.cloud.language_v1.types.Document
         :param retry: A retry object used to retry requests. If None is specified, requests will not be
             retried.
         :type retry: google.api_core.retry.Retry
